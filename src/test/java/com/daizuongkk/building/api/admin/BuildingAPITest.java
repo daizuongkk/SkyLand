@@ -48,7 +48,7 @@ class BuildingAPITest {
 				.floorArea(300L)
 				.rentArea("100,200")
 				.price(20000000L)
-				.typeCodes(List.of("NOI_THAT", "TANG_TRET"))
+				.typeCodes(List.of("NOI_THAT", "TANG_TRET"))			
 				.build();
 	}
 

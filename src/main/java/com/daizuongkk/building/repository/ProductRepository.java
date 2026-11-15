@@ -14,7 +14,6 @@ import com.daizuongkk.building.pagination.PaginationResult;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.NoResultException;
 import jakarta.persistence.PersistenceContext;
-import jakarta.persistence.Query;
 import jakarta.persistence.TypedQuery;
 import lombok.RequiredArgsConstructor;
 
@@ -23,102 +22,104 @@ import lombok.RequiredArgsConstructor;
 @Repository
 public class ProductRepository {
 
-	@PersistenceContext
-	private EntityManager entityManager;
+  @PersistenceContext
+  private EntityManager entityManager;
 
-	public Building findProduct(Long id) {
-		try {
-			String sql = "Select e from " + Building.class.getName() + " e Where e.id =:id ";
-			Query query = entityManager.createQuery(sql, Building.class);
-			query.setParameter("id", id);
-			return (Building) query.getSingleResult();
-		} catch (NoResultException e) {
-			return null;
-		}
-	}
+  public Building findProduct(Long id) {
+    if (id == null) {
+      return null;
+    }
+    try {
+      String jpql = "SELECT e FROM Building e WHERE e.id = :id";
+      TypedQuery<Building> query = entityManager.createQuery(jpql, Building.class);
+      query.setParameter("id", id);
+      return query.getSingleResult();
+    } catch (NoResultException e) {
+      return null;
+    }
+  }
 
-	public ProductInfo findProductInfo(Long id) {
-		Building building = this.findProduct(id);
-		if (building == null) {
-			return null;
-		}
-		return new ProductInfo(building.getId(), building.getName(), building.getPrice(), building.getStreet(),
-				building.getWard(), building.getDistrict());
-	}
+  public ProductInfo findProductInfo(Long id) {
+    Building building = this.findProduct(id);
+    if (building == null) {
+      return null;
+    }
+    return new ProductInfo(
+        building.getId(),
+        building.getName(),
+        building.getPrice(),
+        building.getStreet(),
+        building.getWard(),
+        building.getDistrict());
+  }
 
-	@Transactional(rollbackFor = Exception.class)
-	public void save(ProductForm productForm) {
-		Long id = productForm.getId();
+  @Transactional(rollbackFor = Exception.class)
+  public void save(ProductForm productForm) throws IOException {
+    Long id = productForm.getId();
+    Building building = (id != null) ? this.findProduct(id) : null;
 
-		Building building = null;
+    boolean isNew = false;
+    if (building == null) {
+      isNew = true;
+      building = new Building();
+      building.setCreatedDate(new Date());
+    }
 
-		boolean isNew = false;
-		if (id != null) {
-			building = this.findProduct(id);
-		}
-		if (building == null) {
-			isNew = true;
-			building = new Building();
-			building.setCreatedDate(new Date());
-		}
-		building.setId(id);
-		building.setName(productForm.getName());
-		building.setPrice(productForm.getPrice());
+    building.setName(productForm.getName());
+    building.setPrice(productForm.getPrice());
 
-		if (productForm.getFileData() != null) {
-			byte[] image = null;
-			try {
-				image = productForm.getFileData().getBytes();
-			} catch (IOException e) {
-			}
-			if (image != null && image.length > 0) {
-				building.setImage(image);
-			}
-		}
-		if (isNew) {
-			entityManager.persist(building);
-		}
-		// If error in DB, Exceptions will be thrown out immediately
-		entityManager.flush();
-	}
+    if (productForm.getFileData() != null && !productForm.getFileData().isEmpty()) {
+      byte[] image = productForm.getFileData().getBytes();
+      if (image != null && image.length > 0) {
+        building.setImage(image);
+      }
+    }
 
-	@Transactional(readOnly = true)
-	public PaginationResult<ProductInfo> queryProducts(int page, int maxResult, int maxNavigationPage, String likeName) {
+    if (isNew) {
+      entityManager.persist(building);
+    }
+    entityManager.flush();
+  }
 
-		// MAIN QUERY
-		String sql = "Select new " + ProductInfo.class.getName()
-				+ "(p.id, p.name, p.price, p.street, p.ward, p.district) from " + Building.class.getName() + " p ";
+  @Transactional(readOnly = true)
+  public PaginationResult<ProductInfo> queryProducts(int page, int maxResult, int maxNavigationPage, String likeName) {
+    StringBuilder jpql = new StringBuilder(
+        "SELECT new com.daizuongkk.building.model.ProductInfo(p.id, p.name, p.price, p.street, p.ward, p.district) FROM Building p");
+    StringBuilder countJpql = new StringBuilder("SELECT COUNT(p) FROM Building p");
 
-		// COUNT QUERY
-		String countSql = "Select count(p) from " + Building.class.getName() + " p ";
+    boolean hasLike = likeName != null && !likeName.trim().isEmpty();
 
-		boolean hasLike = likeName != null && !likeName.isEmpty();
+    if (hasLike) {
+      String whereClause = " WHERE LOWER(p.name) LIKE :likeName ESCAPE '\\'";
+      jpql.append(whereClause);
+      countJpql.append(whereClause);
+    }
 
-		if (hasLike) {
-			sql += " where lower(p.name) like :likeName ";
-			countSql += " where lower(p.name) like :likeName ";
-		}
+    // Ensure 'createdDate' matches the exact field name in your Building entity
+    jpql.append(" ORDER BY p.createdDate DESC");
 
-		sql += " order by p.createDate desc ";
+    TypedQuery<ProductInfo> query = entityManager.createQuery(jpql.toString(), ProductInfo.class);
+    TypedQuery<Long> countQuery = entityManager.createQuery(countJpql.toString(), Long.class);
 
-		// Tạo TypedQuery
-		TypedQuery<ProductInfo> query = entityManager.createQuery(sql, ProductInfo.class);
+    if (hasLike) {
+      String escapedName = escapeLikeWildcards(likeName.trim().toLowerCase());
+      String pattern = "%" + escapedName + "%";
+      query.setParameter("likeName", pattern);
+      countQuery.setParameter("likeName", pattern);
+    }
 
-		// Tạo CountQuery
-		TypedQuery<Long> countQuery = entityManager.createQuery(countSql, Long.class);
-		if (hasLike) {
-			String v = "%" + likeName.toLowerCase() + "%";
-			query.setParameter("likeName", v);
-			countQuery.setParameter("likeName", v);
-		}
+    return new PaginationResult<>(query, countQuery, page, maxResult, maxNavigationPage);
+  }
 
-		// Trả về phân trang
-		return new PaginationResult<>(query, countQuery, page, maxResult, maxNavigationPage);
-	}
+  @Transactional(readOnly = true)
+  public PaginationResult<ProductInfo> queryProducts(int page, int maxResult, int maxNavigationPage) {
+    return queryProducts(page, maxResult, maxNavigationPage, null);
+  }
 
-	@Transactional(readOnly = true)
-	public PaginationResult<ProductInfo> queryProducts(int page, int maxResult, int maxNavigationPage) {
-		return queryProducts(page, maxResult, maxNavigationPage, null);
-	}
-
+  private String escapeLikeWildcards(String input) {
+    return input
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_");
+  }
 }
